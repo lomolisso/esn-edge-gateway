@@ -1,0 +1,17 @@
+{
+    "apiVersion": "v3",
+    "device": {
+        "name": "edge-sensor-name-placeholder",
+        "description": "edge-sensor-mac-placeholder",
+        "adminState": "UNLOCKED",  
+        "operatingState": "DOWN",    
+        "labels": ["MQTT"],
+        "serviceName": "device-mqtt",
+        "profileName": "edge-sensor-device-profile",
+        "protocols": {
+            "mqtt": {
+                "CommandTopic": "command/edge-sensor-name-placeholder"
+            }
+        }
+    }
+}

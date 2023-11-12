@@ -1,0 +1,40 @@
+name: "edge-sensor-device-profile"
+manufacturer: "Espressif Systems"
+model: "ESP32"
+description: "A device profile for an ESP32 based edge sensor"
+labels:
+  - "mqtt"
+
+deviceResources:
+  - name: randnum
+    isHidden: false
+    description: "edge sensor random number"
+    properties:
+      valueType: "Float32"
+      readWrite: "R"
+  - name: mqtt-connection-status
+    isHidden: false
+    description: "defines whether the device is connected to MQTT broker or not"
+    properties:
+      valueType: "Bool"
+      readWrite: "R"
+  - name: ml-model
+    isHidden: true
+    description: "edge sensor ML model"
+    properties:
+      valueType: "Bool"
+      readWrite: "W"
+      defaultValue: false
+  - name: working-status
+    isHidden: false
+    description: "defines whether edge sensor is working"
+    properties:
+      valueType: "Bool"
+      readWrite: "W"
+
+deviceCommands:
+  - name: config
+    readWrite: "W"
+    isHidden: false
+    resourceOperations:
+        - { deviceResource: "ml-model" }
