@@ -1,9 +1,8 @@
 import jwt
 from app.api import schemas
 from datetime import datetime, timezone
-from app.config import SECRET_KEY, EDGE_SENSOR_POP_KEYWORD, EDGE_GATEWAY_WIFI_SSID, EDGE_GATEWAY_WIFI_PASSPHRASE, EDGE_GATEWAY_BLE_IFACE
+from app.config import SECRET_KEY
 from fastapi import HTTPException, Header
-from app.ble_wifi_provisioner import BLEWiFiProvisioner
 
 def verify_token(authorization: str = Header(None)):
     try:
@@ -19,12 +18,3 @@ def verify_token(authorization: str = Header(None)):
         print(e)
         raise HTTPException(status_code=401, detail="Invalid token or no token provided.")
     
-
-def get_ble_provisioner():
-    provisioner = BLEWiFiProvisioner(
-        pop=EDGE_SENSOR_POP_KEYWORD,
-        wifi_ssid=EDGE_GATEWAY_WIFI_SSID,
-        wifi_passphrase=EDGE_GATEWAY_WIFI_PASSPHRASE,
-        iface=EDGE_GATEWAY_BLE_IFACE
-    )
-    yield provisioner
