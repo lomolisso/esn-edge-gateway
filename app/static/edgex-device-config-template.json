@@ -4,7 +4,7 @@
         "name": "edge-sensor-name-placeholder",
         "description": "edge-sensor-mac-placeholder",
         "adminState": "UNLOCKED",  
-        "operatingState": "DOWN",    
+        "operatingState": "UP",    
         "labels": ["MQTT"],
         "serviceName": "device-mqtt",
         "profileName": "edge-sensor-device-profile",

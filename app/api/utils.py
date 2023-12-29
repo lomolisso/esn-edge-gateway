@@ -1,3 +1,5 @@
+import base64
+import redis
 from typing import Union
 import json
 from app.api import schemas
@@ -9,7 +11,6 @@ from app.config import (
     EDGEX_FOUNDRY_CORE_METADATA_API_URL,
     EDGEX_FOUNDRY_CORE_COMMAND_API_URL,
     ESN_BLE_PROV_URL,
-    EDGEX_DEVICE_PROFILE_FILE,
     EDGEX_DEVICE_CONFIG_TEMPLATE_FILE,
 )
 
@@ -127,7 +128,9 @@ def _post_edgex_metadata_devices(devices):
 
         _edgex_devices.append(
             schemas.EdgeXDeviceOut(
-                device_name=dev_name, device_address=dev_address, edgex_device_uuid=dev_response["id"]
+                device_name=dev_name,
+                device_address=dev_address,
+                edgex_device_uuid=dev_response["id"],
             )
         )
     return _edgex_devices
@@ -196,6 +199,7 @@ def _run_edgex_device_set_command(device_name, command, payload):
     to EdgeX core-command API. The payload must be a dict that
     includes the deviceResource name and the value to set.
     """
+    print(f"[SET->{device_name}]: {payload}")
     response = requests.put(
         url=f"{EDGEX_FOUNDRY_CORE_COMMAND_API_URL}/device/name/{device_name}/{command}",
         json=payload,
@@ -208,53 +212,264 @@ def _run_edgex_device_set_command(device_name, command, payload):
     return response.json()
 
 
-def _run_edgex_device_get_command(device_name, command):
+async def get_command_queue_total_size(redis_client, device_name):
     """
-    Runs a GET command for a given device by making a GET request
-    to EdgeX core-command API.
+    Returns the sum of the sizes of each command in the queue for a given device.
     """
-    response = requests.get(
-        url=f"{EDGEX_FOUNDRY_CORE_COMMAND_API_URL}/device/name/{device_name}/{command}",
+    queue_key = f"commands:queue:{device_name}"
+    total_size = 0
+
+    # Retrieve all commands in the queue without removing them
+    all_commands = await redis_client.lrange(queue_key, 0, -1)
+
+    # Iterate through each command and sum their sizes
+    for command_json in all_commands:
+        command_data = json.loads(command_json)
+        total_size += command_data.get("size", 0)
+
+    return total_size
+
+
+async def enqueue_command(redis_client, device_name, command, params=None):
+    """
+    Enqueues a command for a given device by pushing it to the
+    device's command queue.
+    """
+    queue_key = f"commands:queue:{device_name}"
+    command_size = {
+        "edge-sensor-predictive-model": 2,
+        "edge-sensor-config": 1,
+        "state-machine-ready": 1,
+        "state-machine-start": 1,
+        "state-machine-stop": 1,
+        "state-machine-reset": 1,
+    }
+    await redis_client.rpush(
+        queue_key,
+        json.dumps(
+            {
+                "command": command,
+                "size": command_size[command],
+                "device_name": device_name,
+                "params": params,
+            }
+        ),
     )
-    if response.status_code != 200:
-        raise Exception(
-            f"Failed to execute the GET command on {device_name} through the EdgeX core command microservice. Status code: {response.status_code}"
-        )
-
-    return response.json()
 
 
-def start_devices(device_names):
+async def consume_command_queue(redis_client, device_name):
     """
-    Starts the devices by setting the 'working-status' deviceResource to true.
+    Consumes the command queue for a given device by popping the
+    commands from the queue.
     """
-    for dev_name in device_names:
-        _run_edgex_device_set_command(
-            device_name=dev_name,
-            command="working-status",
-            payload={"working-status": "true"},
-        )
-
-
-def stop_devices(device_names):
-    """
-    Stops the devices by setting the 'working-status' deviceResource to false.
-    """
-    for dev_name in device_names:
-        _run_edgex_device_set_command(
-            device_name=dev_name,
-            command="working-status",
-            payload={"working-status": "false"},
+    queue_key = f"commands:queue:{device_name}"
+    commands = [
+        json.loads(cmd.decode("utf-8"))
+        for cmd in await redis_client.lrange(queue_key, 0, -1)
+    ]
+    await redis_client.ltrim(queue_key, 1, 0)
+    for cmd in commands:
+        handle_command(
+            command=cmd["command"],
+            device_name=cmd["device_name"],
+            params=cmd["params"],
         )
 
 
-def config_devices(device_names, config):
+async def clean_queue(device_name, redis_client):
+    """
+    Cleans the command queue for a given device by popping the
+    commands from the queue.
+    """
+    queue_key = f"commands:queue:{device_name}"
+    await redis_client.ltrim(queue_key, 1, 0)
+
+
+async def update_predictive_model(redis_client, devices, model):
+    for dev in devices:
+        await enqueue_command(
+            redis_client=redis_client,
+            device_name=dev,
+            command="edge-sensor-predictive-model",
+            params=model,
+        )
+
+
+async def config_devices(redis_client, devices, config):
+    for dev in devices:
+        await enqueue_command(
+            redis_client=redis_client,
+            device_name=dev,
+            command="edge-sensor-config",
+            params=config,
+        )
+
+
+async def devices_ready(redis_client, devices):
+    for dev in devices:
+        await enqueue_command(
+            redis_client=redis_client,
+            device_name=dev,
+            command="state-machine-ready",
+        )
+
+
+async def start_devices(redis_client, devices):
+    for dev in devices:
+        await enqueue_command(
+            redis_client=redis_client,
+            device_name=dev,
+            command="state-machine-start",
+        )
+
+
+async def stop_devices(redis_client, devices):
+    for dev in devices:
+        await enqueue_command(
+            redis_client=redis_client,
+            device_name=dev,
+            command="state-machine-stop",
+        )
+
+
+async def reset_devices(redis_client, devices):
+    for dev in devices:
+        await enqueue_command(
+            redis_client=redis_client,
+            device_name=dev,
+            command="state-machine-reset",
+        )
+
+
+async def pending_commands(redis_client, device_name):
+    """
+    First sends the number of pending commands of a device, then
+    consumes the command queue.
+    """
+    queue_size = await get_command_queue_total_size(
+        redis_client=redis_client, device_name=device_name
+    )
+
+    _send_num_pending_commands(device_name=device_name, pending_commands=queue_size)
+
+    if queue_size > 0:
+        await consume_command_queue(redis_client=redis_client, device_name=device_name)
+
+
+def handle_command(command, device_name, params=None):
+    if command == "edge-sensor-predictive-model":
+        _run_update_predictive_model_command(device_name, params)
+    elif command == "edge-sensor-config":
+        _run_config_device_command(device_name, params)
+    elif command == "state-machine-ready":
+        _run_ready_device_command(device_name)
+    elif command == "state-machine-start":
+        _run_start_device_command(device_name)
+    elif command == "state-machine-stop":
+        _run_stop_device_command(device_name)
+    elif command == "state-machine-reset":
+        _run_reset_device_command(device_name)
+    else:
+        raise Exception(f"Unknown command: {command}")
+
+
+def _run_config_device_command(device_name, params):
     """
     Configures the devices by setting the 'ml-model' deviceResource to true or false.
     """
-    for dev_name in device_names:
-        _run_edgex_device_set_command(
-            device_name=dev_name,
-            command="config",
-            payload={"ml-model": "true" if config.ml_model else "false"},
-        )
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="edge-sensor-config",
+        payload={
+            "config-measurement-interval-ms": params["measurement_interval_ms"]
+        },
+    )
+
+
+def _run_update_predictive_model_command(device_name, params):
+    """
+    Updates the predictive model by setting the 'ml-model' deviceResource to true or false.
+    """
+    print(params)
+    model_size = params["model_size"]
+    b64_encoded_model = params["b64_encoded_model"]
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="edge-sensor-predictive-model",
+        payload={
+            "predictive-model-size": model_size,
+            "predictive-model-b64": b64_encoded_model,
+        },
+    )
+
+
+def _run_ready_device_command(device_name):
+    """
+    Sets the 'state-machine-ready' deviceResource to true.
+    """
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="state-machine-ready",
+        payload={"state-machine-ready": "true"},
+    )
+
+
+def _run_start_device_command(device_name):
+    """
+    Starts a device by setting the 'state-machine-start' deviceResource to true.
+    """
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="state-machine-start",
+        payload={"state-machine-start": "true"},
+    )
+
+
+def _run_stop_device_command(device_name):
+    """
+    Stops a device by setting the 'state-machine-stop' deviceResource to false.
+    """
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="state-machine-stop",
+        payload={"state-machine-stop": "true"},
+    )
+
+
+def _run_reset_device_command(device_name):
+    """
+    Resets a device by setting the 'state-machine-reset' deviceResource to true.
+    """
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="state-machine-reset",
+        payload={"state-machine-reset": "true"},
+    )
+
+
+def _send_num_pending_commands(device_name, pending_commands):
+    """
+    Sets the 'response-pending-commands' deviceResource with the number of pending commands.
+    """
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="response-pending-commands",
+        payload={
+            "response-pending-commands": pending_commands,
+        },
+    )
+
+
+async def print_queue(redis_client, device_name):
+    """
+    Prints the content of the command queue for a given device.
+    This means that the commands are not consumed. Yet each command
+    is decoded and printed to the console.
+    """
+
+    queue_key = f"commands:queue:{device_name}"
+    all_commands = await redis_client.lrange(queue_key, 0, -1)
+
+    for command_json in all_commands:
+        command_data = json.loads(command_json)
+        print(command_data)

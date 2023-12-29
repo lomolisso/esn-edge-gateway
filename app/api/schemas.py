@@ -7,6 +7,7 @@ from typing import List
 from pydantic import BaseModel, Field
 
 
+# --- Auth ---
 class AuthDataIn(BaseModel):
     pop: str
 
@@ -15,14 +16,32 @@ class AuthDataOut(BaseModel):
     jwt_token: str
 
 
+# -- Edge Gateway --
+
+
 class EdgeGateway(BaseModel):
     device_name: str
     device_address: str
 
 
-class BLEDevice(BaseModel):
+# --- Device ---
+class Device(BaseModel):
     device_name: str
+
+class DeviceWithAddress(Device):
     device_address: str
+
+class ConfigParams(BaseModel):
+    measurement_interval_ms: int
+
+class DeviceConfig(BaseModel):
+    devices: list[str]
+    params: ConfigParams
+
+
+# --- BLE ---
+
+BLEDevice = DeviceWithAddress
 
 
 class BLEDeviceWithPoP(BLEDevice):
@@ -34,17 +53,13 @@ class BLEProvResponse(BaseModel):
     not_provisioned: list[str]
 
 
-class BaseEdgeXDevice(BaseModel):
-    device_name: str
+# --- EdgeX ---
+
+EdgeXDeviceIn = DeviceWithAddress
 
 
-class EdgeXDeviceIn(BaseEdgeXDevice):
-    device_address: str
-
-
-class EdgeXDeviceOut(BaseEdgeXDevice):
+class EdgeXDeviceOut(DeviceWithAddress):
     edgex_device_uuid: str
-    device_address: str
 
 
 class EdgeXReading(BaseModel):
@@ -65,7 +80,3 @@ class EdgeXDeviceData(BaseModel):
     sourceName: str
     origin: int
     readings: List[EdgeXReading]
-
-
-class DeviceConfig(BaseModel):
-    ml_model: bool

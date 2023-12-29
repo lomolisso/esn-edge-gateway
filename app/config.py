@@ -16,6 +16,8 @@ EDGEX_FOUNDRY_CORE_COMMAND_API_URL = os.getenv("EDGEX_FOUNDRY_CORE_COMMAND_API_U
 EDGEX_DEVICE_PROFILE_FILE = os.getenv("EDGEX_DEVICE_PROFILE_FILE", "device-profile.yaml")
 EDGEX_DEVICE_CONFIG_TEMPLATE_FILE = os.getenv("EDGEX_DEVICE_CONFIG_TEMPLATE_FILE", "edgex-device-config-template.json")
 
+EDGEX_REDIS_URL = os.getenv("EDGEX_REDIS_URL", "redis://localhost:6379")
+
 ESN_BLE_PROV_URL = os.getenv("ESN_BLE_PROV_URL")
 
 TIMEZONE = os.environ.get("TIMEZONE", "Chile/Continental")
