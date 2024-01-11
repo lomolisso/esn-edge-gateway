@@ -19,6 +19,7 @@ EDGEX_DEVICE_CONFIG_TEMPLATE_FILE = os.getenv("EDGEX_DEVICE_CONFIG_TEMPLATE_FILE
 EDGEX_REDIS_URL = os.getenv("EDGEX_REDIS_URL", "redis://localhost:6379")
 
 ESN_BLE_PROV_URL = os.getenv("ESN_BLE_PROV_URL")
+ESN_PRED_NODE_URL = os.getenv("ESN_PRED_NODE_URL")
 
 TIMEZONE = os.environ.get("TIMEZONE", "Chile/Continental")
 

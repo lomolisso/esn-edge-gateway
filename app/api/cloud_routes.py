@@ -22,6 +22,7 @@ from app.config import (
 
 cloud_router = APIRouter(prefix="/cloud")
 
+# --- Gateway Commands ---
 
 @cloud_router.post("/auth")
 async def authenticate_gateway(auth_data: schemas.AuthDataIn) -> schemas.AuthDataOut:
@@ -42,18 +43,27 @@ async def get_gateway_data() -> schemas.EdgeGateway:
         device_address=api_utils.get_wlan_iface_address(),
     )
 
+@cloud_router.post("/gateway/predictive-model", dependencies=[Depends(verify_token)])
+async def upload_gateway_predictive_model(
+    predictive_model: UploadFile = File(...),
+) -> Response:
+    model_bytes = await predictive_model.read()
+    model_size = len(model_bytes)
+    b64_encoded_model = base64.b64encode(model_bytes).decode("utf-8")
+    
+    # Send the model to the gateway predictive node
+    return await api_utils.update_predictive_model(
+        model={"model_size": model_size, "b64_encoded_model": b64_encoded_model},
+    )
 
-@cloud_router.post("/upload-edgex-devices", dependencies=[Depends(verify_token)])
+# --- Device Commands ---
+
+@cloud_router.post("/devices/upload-edgex", dependencies=[Depends(verify_token)])
 async def upload_edgex_devices(
     devices: list[schemas.EdgeXDeviceIn],
 ) -> Response:
     devices = [device.model_dump() for device in devices]
     return api_utils.upload_edgex_devices(devices)
-
-
-@cloud_router.post("/clean-queue/{device_name}")
-async def clean_queue(device_name, redis_client=Depends(get_redis)) -> Response:
-    await api_utils.clean_queue(device_name, redis_client)
 
 
 @cloud_router.get("/devices/discover", dependencies=[Depends(verify_token)])
@@ -66,9 +76,6 @@ async def provision_devices(
     devices: list[schemas.BLEDeviceWithPoP],
 ) -> schemas.BLEProvResponse:
     return api_utils.provision_ble_devices(devices)
-
-
-# --- Device Commands ---
 
 
 @cloud_router.post("/devices/predictive-model", dependencies=[Depends(verify_token)])
@@ -142,23 +149,3 @@ async def reset_devices(
         devices=devices,
     )
 
-
-@cloud_router.post("/{device_name}/print-queue")
-async def print_queue(
-    device_name: str = Path(...),
-    redis_client=Depends(get_redis)
-) -> Response:
-    await api_utils.print_queue(
-        redis_client=redis_client,
-        device_name=device_name,
-    )
-
-@cloud_router.post("/{device_name}/clean-queue")
-async def clean_queue(
-    device_name: str = Path(...),
-    redis_client=Depends(get_redis)
-) -> Response:
-    await api_utils.clean_queue(
-        redis_client=redis_client,
-        device_name=device_name,
-    )
