@@ -53,7 +53,7 @@ async def upload_gateway_predictive_model(
     
     # Send the model to the gateway predictive node
     return await api_utils.update_predictive_model(
-        model={"model_size": model_size, "b64_encoded_model": b64_encoded_model},
+        model={"pred_model_size": model_size, "b64_encoded_model": b64_encoded_model},
     )
 
 # --- Device Commands ---
