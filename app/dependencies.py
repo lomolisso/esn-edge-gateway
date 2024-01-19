@@ -1,7 +1,7 @@
 import aioredis
 import jwt
 from datetime import datetime, timezone
-from app.config import SECRET_KEY, EDGEX_REDIS_URL
+from app.config import SECRET_KEY, ESN_REDIS_URL
 from fastapi import HTTPException, Header
 
 
@@ -23,7 +23,7 @@ async def verify_token(authorization: str = Header(None)):
 
 
 async def get_redis() -> aioredis.Redis:
-    redis = await aioredis.create_redis_pool(EDGEX_REDIS_URL)
+    redis = await aioredis.create_redis_pool(ESN_REDIS_URL)
     try:
         yield redis
     finally:

@@ -80,3 +80,10 @@ class EdgeXDeviceData(BaseModel):
     sourceName: str
     origin: int
     readings: List[EdgeXReading]
+
+class PredictionCommandPayload(BaseModel):
+    prediction_source_layer: str
+    request_timestamp: int
+    measurement: float
+    prediction: float
+    

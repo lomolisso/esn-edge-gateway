@@ -52,8 +52,8 @@ async def upload_gateway_predictive_model(
     b64_encoded_model = base64.b64encode(model_bytes).decode("utf-8")
     
     # Send the model to the gateway predictive node
-    return await api_utils.update_predictive_model(
-        model={"pred_model_size": model_size, "b64_encoded_model": b64_encoded_model},
+    return await api_utils.upload_gateway_predictive_model(
+        model_payload={"pred_model_size": model_size, "b64_encoded_model": b64_encoded_model},
     )
 
 # --- Device Commands ---
@@ -87,7 +87,7 @@ async def devices_predictive_model(
     model_bytes = await predictive_model.read()
     model_size = len(model_bytes)
     b64_encoded_model = base64.b64encode(model_bytes).decode("utf-8")
-    await api_utils.update_predictive_model(
+    await api_utils.upload_devices_predictive_model(
         redis_client=redis_client,
         devices=devices,
         model={"model_size": model_size, "b64_encoded_model": b64_encoded_model},
@@ -149,3 +149,14 @@ async def reset_devices(
         devices=devices,
     )
 
+@cloud_router.post("/devices/{device_name}/prediction-command", dependencies=[Depends(verify_token)])
+async def prediction_command(
+    payload: schemas.PredictionCommandPayload,
+    device_name: str = Path(...),
+    redis_client=Depends(get_redis)
+) -> Response:
+    await api_utils.prediction_command(
+        redis_client=redis_client,
+        device_name=device_name,
+        payload=payload.model_dump()
+    )

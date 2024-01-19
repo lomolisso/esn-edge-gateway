@@ -28,7 +28,22 @@ def post_json_to_app_backend(endpoint: str, json_data: Union[dict, list]):
     return response.json()
 
 
+# --- Predictive node utils ---
+def post_json_to_predictive_node(endpoint: str, json_data: Union[dict, list]):
+    # Sends a POST request to the predictive node
+    response = requests.post(
+        url=f"{ESN_PRED_NODE_URL}{endpoint}",
+        json=json_data,
+    )
+    if response.status_code != 200:
+        raise Exception(f"API call failed. Status code: {response.status_code}")
+    return response.json()
+
+def check_prediction(prediction, measurement, **kwargs):
+    pass
+
 # --- Ble prov microservice utils ---
+
 def get_wlan_iface_address():
     """
     Returns the MAC address of a given WLAN interface.
@@ -140,7 +155,6 @@ def _run_edgex_device_set_command(device_name, command, payload):
     to EdgeX core-command API. The payload must be a dict that
     includes the deviceResource name and the value to set.
     """
-    print(f"[SET->{device_name}]: {payload}")
     response = requests.put(
         url=f"{EDGEX_FOUNDRY_CORE_COMMAND_API_URL}/device/name/{device_name}/{command}",
         json=payload,
@@ -160,20 +174,11 @@ async def _redis_enqueue_command(redis_client, device_name, command, params=None
     device's command queue.
     """
     queue_key = f"commands:queue:{device_name}"
-    command_size = {
-        "edge-sensor-predictive-model": 2,
-        "edge-sensor-config": 1,
-        "state-machine-ready": 1,
-        "state-machine-start": 1,
-        "state-machine-stop": 1,
-        "state-machine-reset": 1,
-    }
     await redis_client.rpush(
         queue_key,
         json.dumps(
             {
                 "command": command,
-                "size": command_size[command],
                 "device_name": device_name,
                 "params": params,
             }
@@ -181,22 +186,16 @@ async def _redis_enqueue_command(redis_client, device_name, command, params=None
     )
 
 
-async def _redis_get_command_queue_size(redis_client, device_name):
+async def _redis_get_command_queue_len(redis_client, device_name):
     """
-    Returns the sum of the sizes of each command in the queue for a given device.
+    Returns the length of the command queue for a given device.
     """
     queue_key = f"commands:queue:{device_name}"
     total_size = 0
 
     # Retrieve all commands in the queue without removing them
     all_commands = await redis_client.lrange(queue_key, 0, -1)
-
-    # Iterate through each command and sum their sizes
-    for command_json in all_commands:
-        command_data = json.loads(command_json)
-        total_size += command_data.get("size", 0)
-
-    return total_size
+    return len(all_commands)
 
 
 async def _redis_consume_command_queue(redis_client, device_name):
@@ -221,9 +220,11 @@ async def _redis_consume_command_queue(redis_client, device_name):
 # --- Device commands private utils ---
 
 def _handle_command(command, device_name, params=None):
-    if command == "edge-sensor-predictive-model":
-        _run_update_devices_predictive_model_command(device_name, params)
-    elif command == "edge-sensor-config":
+    if command == "debug-prediction-command":
+        _run_prediction_command(device_name, params)
+    elif command == "device-predictive-model":
+        _run_upload_devices_predictive_model_command(device_name, params)
+    elif command == "device-config":
         _run_config_device_command(device_name, params)
     elif command == "state-machine-ready":
         _run_ready_device_command(device_name)
@@ -237,31 +238,46 @@ def _handle_command(command, device_name, params=None):
         raise Exception(f"Unknown command: {command}")
 
 
-def _run_update_devices_predictive_model_command(device_name, params):
+def _run_upload_devices_predictive_model_command(device_name, params):
     """
     Updates the predictive model by setting the 'ml-model' deviceResource to true or false.
     """
-    model_size = params["model_size"]
-    b64_encoded_model = params["b64_encoded_model"]
+    _payload = {
+        "predictive-model-size": params["model_size"],
+        "predictive-model-b64": params["b64_encoded_model"],
+    }
     _run_edgex_device_set_command(
         device_name=device_name,
-        command="edge-sensor-predictive-model",
-        payload={
-            "predictive-model-size": model_size,
-            "predictive-model-b64": b64_encoded_model,
-        },
+        command="device-predictive-model",
+        payload={"device-predictive-model": _payload},
     )
     
+def _run_prediction_command(device_name, params):
+    _payload = {
+        "pred-cmd-source-layer": params["prediction_source_layer"],
+        "pred-cmd-request-timestamp": params["request_timestamp"],
+        "pred-cmd-measurement": params["measurement"],
+        "pred-cmd-prediction": params["prediction"],
+    }
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="debug-prediction-command",
+        payload={"debug-prediction-command": _payload},
+    )
+
     
 def _run_config_device_command(device_name, params):
     """
     Configures the devices by setting the 'ml-model' deviceResource to true or false.
     """
+    _payload = {
+        "config-measurement-interval-ms": params["measurement_interval_ms"],
+    }
     _run_edgex_device_set_command(
         device_name=device_name,
-        command="edge-sensor-config",
+        command="device-config",
         payload={
-            "config-measurement-interval-ms": params["measurement_interval_ms"]
+            "device-config": _payload,
         },
     )
 
@@ -308,6 +324,18 @@ def _run_reset_device_command(device_name):
         command="state-machine-reset",
         payload={"state-machine-reset": "true"},
     )
+    
+def _send_num_pending_commands(device_name, pending_commands):
+    """
+    Sets the 'response-pending-commands' deviceResource with the number of pending commands.
+    """
+    _run_edgex_device_set_command(
+        device_name=device_name,
+        command="response-pending-commands",
+        payload={
+            "response-pending-commands": pending_commands,
+        },
+    )
 
 
 # --- Device commands public utils ---
@@ -346,9 +374,17 @@ async def upload_devices_predictive_model(redis_client, devices, model):
         await _redis_enqueue_command(
             redis_client=redis_client,
             device_name=dev,
-            command="edge-sensor-predictive-model",
+            command="device-predictive-model",
             params=model,
         )
+
+async def prediction_command(redis_client, device_name, payload):
+    await _redis_enqueue_command(
+        redis_client=redis_client,
+        device_name=device_name,
+        command="debug-prediction-command",
+        params=payload,
+    )
 
 
 async def config_devices(redis_client, devices, config):
@@ -356,7 +392,7 @@ async def config_devices(redis_client, devices, config):
         await _redis_enqueue_command(
             redis_client=redis_client,
             device_name=dev,
-            command="edge-sensor-config",
+            command="device-config",
             params=config,
         )
 
@@ -402,10 +438,9 @@ async def pending_commands(redis_client, device_name):
     First sends the number of pending commands of a device, then
     consumes the command queue.
     """
-    queue_size = await _redis_get_command_queue_size(
+    queue_size = await _redis_get_command_queue_len(
         redis_client=redis_client, device_name=device_name
     )
-
     _send_num_pending_commands(device_name=device_name, pending_commands=queue_size)
 
     if queue_size > 0:
