@@ -24,7 +24,7 @@ async def edge_sensors_export(device_data: schemas.EdgeXDeviceData, background_t
 
 
 @edgex_router.post("/gateway/predict")
-async def gateway_pred_request(device_data: schemas.EdgeXDeviceData, background_tasks: BackgroundTasks, redis_client=Depends(get_redis)):    
+async def gateway_pred_request(device_data: schemas.EdgeXDeviceData, background_tasks: BackgroundTasks):    
     device_name, device_data = _preprocess_prediction_request(device_data)
     background_tasks.add_task(api_utils.post_json_to_predictive_node,
         endpoint="/predict",
