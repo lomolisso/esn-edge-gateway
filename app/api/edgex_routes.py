@@ -30,7 +30,8 @@ async def gateway_pred_request(device_data: schemas.EdgeXDeviceData, background_
         endpoint="/predict",
         json_data={
             "device_name": device_name,
-            **device_data,
+            "gateway_name": EDGE_GATEWAY_DEVICE_NAME,
+            **device_data
         },
     )
     
