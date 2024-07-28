@@ -1,13 +1,13 @@
-from fastapi import APIRouter, FastAPI
+from fastapi import FastAPI
 
-from app.config import SECRET_KEY, ORIGINS
-from .api.edgex_routes import edgex_router
-from .api.cloud_routes import cloud_router
+from app.api.routes.callback import callback_router
+from app.api.routes.command import command_router
 
+from app.core.config import SECRET_KEY, ORIGINS
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-app = FastAPI(debug=True)
+app = FastAPI()
 
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
@@ -21,7 +21,5 @@ app.add_middleware(
 )
 
 # Routes
-main_router = APIRouter(prefix="/gateway-api")
-main_router.include_router(cloud_router)
-main_router.include_router(edgex_router)
-app.include_router(main_router)
+app.include_router(callback_router, prefix="/api/v1")
+app.include_router(command_router, prefix="/api/v1")

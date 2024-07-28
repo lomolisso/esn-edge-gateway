@@ -1,447 +1,225 @@
-from typing import Union
-import json
-from app.api import schemas
-import copy
-import requests
-from app.config import (
-    APP_BACKEND_URL,
-    APP_BACKEND_JWT_TOKEN,
-    EDGEX_FOUNDRY_CORE_METADATA_API_URL,
-    EDGEX_FOUNDRY_CORE_COMMAND_API_URL,
-    ESN_BLE_PROV_URL,
-    ESN_PRED_NODE_URL,
-    EDGEX_DEVICE_CONFIG_TEMPLATE_FILE,
+from app.core.config import (
+    CLOUD_API_URL,
+    INFERENCE_MICROSERVICE_URL,
+    BLE_PROV_MICROSERVICE_URL,
+    METADATA_MICROSERVICE_URL,
+    MQTT_SENSOR_MICROSERVICE_URL,
+    CLOUD_INFERENCE_LAYER,
+    SENSOR_INFERENCE_LAYER,
+    HEURISTIC_ERROR_CODE,
 )
 
+from fastapi import status, HTTPException
+import httpx
 
-# --- Cloud layer utils ---
+from app.api.schemas.mqtt_sensor_ms import export as export_schemas
+from app.api.schemas.mqtt_sensor_ms import sensor_cmd as s_cmd_schemas
+from app.api.schemas.mqtt_sensor_ms import sensor_resp as s_resp_schemas
 
-def post_json_to_app_backend(endpoint: str, json_data: Union[dict, list]):
-    # Sends a POST request to the app backend
-    response = requests.post(
-        url=f"{APP_BACKEND_URL}{endpoint}",
-        json=json_data,
-        headers={"Authorization": f"Bearer {APP_BACKEND_JWT_TOKEN}"},
-    )
-    if response.status_code != 200:
-        raise Exception(f"API call failed. Status code: {response.status_code}")
-    return response.json()
+from app.api.schemas.ble_prov_ms import ble as ble_schemas
+from app.api.schemas.inference_ms import inference as inf_schemas
+from app.api.schemas.metadata_ms import metadata as meta_schemas
 
 
-# --- Predictive node utils ---
-def post_json_to_predictive_node(endpoint: str, json_data: Union[dict, list]):
-    # Sends a POST request to the predictive node
-    response = requests.post(
-        url=f"{ESN_PRED_NODE_URL}{endpoint}",
-        json=json_data,
-    )
-    if response.status_code != 200:
-        raise Exception(f"API call failed. Status code: {response.status_code}")
-    return response.json()
 
-def check_prediction(prediction, measurement, **kwargs):
-    pass
+# --- Primitive functions for microservice communication ---
 
-# --- Ble prov microservice utils ---
+async def _post_json_to_microservice(url: str, json_data: dict):
+    async with httpx.AsyncClient() as client:
+        return await client.post(url, json=json_data)
 
-def get_wlan_iface_address():
-    """
-    Returns the MAC address of a given WLAN interface.
-    """
-    response = requests.get(url=f"{ESN_BLE_PROV_URL}/get-wlan-iface-address")
+async def _put_json_to_microservice(url: str, json_data: dict):
+    async with httpx.AsyncClient() as client:
+        return await client.put(url, json=json_data)
 
-    if response.status_code != 200:
-        raise Exception(
-            f"Failed to retrieve wlan iface address from ble-prov microservice. Status code: {response.status_code}"
+async def _get_from_microservice(url: str):
+    async with httpx.AsyncClient() as client:
+        return await client.get(url)
+
+async def _delete_from_microservice(url: str):
+    async with httpx.AsyncClient() as client:
+        return await client.delete(url)
+
+# --- Cloud API functions ---
+async def store_sensor_state_response(response: s_resp_schemas.SensorStateResponse):
+    return await _post_json_to_microservice(f"{CLOUD_API_URL}/store/sensor/response/get/sensor-state", response.model_dump())
+
+async def store_sensor_inference_layer_response(response: s_resp_schemas.InferenceLayerResponse):
+    return await _post_json_to_microservice(f"{CLOUD_API_URL}/store/sensor/response/get/inference-layer", response.model_dump())
+
+async def store_sensor_config_response(response: s_resp_schemas.SensorConfigResponse):
+    return await _post_json_to_microservice(f"{CLOUD_API_URL}/store/sensor/response/get/sensor-config", response.model_dump())
+                                            
+async def export_sensor_reading(sensor_reading: export_schemas.SensorReadingExport):
+    return await _post_json_to_microservice(f"{CLOUD_API_URL}/export/sensor-reading", sensor_reading.model_dump())
+
+async def export_prediction_request(prediction_request: export_schemas.PredictionRequestExport):
+    return await _post_json_to_microservice(f"{CLOUD_API_URL}/export/prediction-request", prediction_request.model_dump())
+
+async def export_prediction_result(prediction_result: export_schemas.PredictionResultExport):
+    return await _post_json_to_microservice(f"{CLOUD_API_URL}/export/prediction-result", prediction_result.model_dump())
+
+async def export_inference_latency_benchmark(inference_latency_benchmark: export_schemas.InferenceLatencyBenchmarkExport):
+    return await _post_json_to_microservice(f"{CLOUD_API_URL}/export/inference-latency-benchmark", inference_latency_benchmark.model_dump())
+
+
+
+# --- BLE Provisioning microservice functions ---
+
+async def ble_discover_sensors():
+    return await _get_from_microservice(f"{BLE_PROV_MICROSERVICE_URL}/discover")
+
+async def ble_provision_sensors(devices: list[ble_schemas.BLEDeviceWithPoP]):
+    json_payload = [device.model_dump() for device in devices]
+    return await _post_json_to_microservice(f"{BLE_PROV_MICROSERVICE_URL}/provision", json_data=json_payload)
+
+# --- Inference microservice functions ---
+
+async def set_gateway_model(gateway_model: inf_schemas.GatewayModel):
+    return await _post_json_to_microservice(f"{INFERENCE_MICROSERVICE_URL}/model/upload", gateway_model.model_dump())
+
+async def send_prediction_request(prediction_request: inf_schemas.PredictionRequestExport):
+    return await _put_json_to_microservice(f"{INFERENCE_MICROSERVICE_URL}/model/prediction/request", prediction_request.model_dump())
+
+# --- Metadata microservice functions ---
+async def get_registered_sensors():
+    return await _get_from_microservice(f"{METADATA_MICROSERVICE_URL}/sensors")
+
+async def verify_target_sensors(target_names: list[str]):
+    response = await get_registered_sensors()
+    if response.status_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=response.status_code, detail=response.json())
+
+    registered_names = [meta_schemas.SensorDescriptor(**sensor).device_name for sensor in response.json()]
+
+    for name in target_names:
+        if name not in registered_names:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Sensor '{name}' is not registered")
+
+async def metadata_create_sensors(sensors: list[meta_schemas.SensorDescriptor]):
+    for sensor in sensors:
+        response = await _post_json_to_microservice(f"{METADATA_MICROSERVICE_URL}/sensor", sensor.model_dump())
+        if response.status_code != status.HTTP_201_CREATED:
+            raise HTTPException(status_code=response.status_code, detail=response.json())
+
+async def metadata_update_sensors(sensors: list[meta_schemas.SensorDescriptor], fields: dict):
+    for sensor in sensors:
+        response = await _put_json_to_microservice(
+            url=f"{METADATA_MICROSERVICE_URL}/sensor/{sensor.device_name}", 
+            json_data={**fields, **sensor.model_dump()}
         )
-
-    return response.json()["device_address"]
-
-
-def discover_ble_devices():
-    """
-    Makes a GET request to the ble-prov microservice which returns
-    a list of BLE devices obtained through a BLE discovery scan.
-    """
-    response = requests.get(url=f"{ESN_BLE_PROV_URL}/discover")
-
-    if response.status_code != 200:
-        raise Exception(
-            f"Failed to retrieve BLEDevices from ble-prov microservice. Status code: {response.status_code}"
-        )
-
-    return response.json()
-
-
-def provision_ble_devices(ble_devices: list[schemas.BLEDeviceWithPoP]):
-    """
-    Makes a POST request to the ble-prov microservice to provision
-    a list of BLE devices.
-    """
-    ble_devices = [dev.model_dump() for dev in ble_devices]
-    response = requests.post(
-        url=f"{ESN_BLE_PROV_URL}/prov-device",
-        json=ble_devices,
-    )
-
-    if response.status_code != 200:
-        raise Exception(
-            f"Failed to provision BLEDevices through the ble-prov microservice. Status code: {response.status_code}"
-        )
-
-    return response.json()
-
-
-# --- EdgeX microservices utils ---
-
-def _post_edgex_metadata_devices(devices):
-    """
-    Makes a POST request to EdgeX core-metadata API to create devices.
-    """
-    response = requests.post(
-        url=f"{EDGEX_FOUNDRY_CORE_METADATA_API_URL}/device", json=devices
-    )
-    if response.status_code != 207:
-        raise Exception(f"API call failed. Status code: {response.status_code}")
-
-    # Check if all devices were created successfully
-    device_names = [device["device"]["name"] for device in devices]
-    device_addresses = [device["device"]["description"] for device in devices]
-    dev_iterator = zip(device_names, device_addresses, response.json())
-
-    _edgex_devices = []
-    for dev_name, dev_address, dev_response in dev_iterator:
-        if dev_response["statusCode"] != 201:
-            raise Exception(
-                f"Failed to create device {dev_name} in edgeX. Status code: {dev_response['statusCode']}"
-            )
-
-        _edgex_devices.append(
-            schemas.EdgeXDeviceOut(
-                device_name=dev_name,
-                device_address=dev_address,
-                edgex_device_uuid=dev_response["id"],
-            )
-        )
-    return _edgex_devices
-
-
-def upload_edgex_devices(devices):
-    """
-    Uploads to EdgeX core-metadata API the provided devices based on the
-    device config template file.
-    """
-    # Load edgex device template for core metadata API
-    with open(f"app/static/{EDGEX_DEVICE_CONFIG_TEMPLATE_FILE}", "r") as json_file:
-        edgex_device_template = json.load(json_file)
-
-    # Create edgex device config for each device
-    edgex_devices_payload = []
-    for device in devices:
-        edgex_device = copy.deepcopy(edgex_device_template)
-        edgex_device["device"]["name"] = device["device_name"]
-        edgex_device["device"]["description"] = device["device_address"]
-        edgex_device["device"]["protocols"]["mqtt"][
-            "CommandTopic"
-        ] = f"command/{device['device_name']}"
-        edgex_devices_payload.append(edgex_device)
-
-    return _post_edgex_metadata_devices(edgex_devices_payload)
-
-
-def _run_edgex_device_set_command(device_name, command, payload):
-    """
-    Runs a SET command for a given device by making a PUT request
-    to EdgeX core-command API. The payload must be a dict that
-    includes the deviceResource name and the value to set.
-    """
-    response = requests.put(
-        url=f"{EDGEX_FOUNDRY_CORE_COMMAND_API_URL}/device/name/{device_name}/{command}",
-        json=payload,
-    )
-    if response.status_code != 200:
-        raise Exception(
-            f"Failed to execute the SET command on {device_name} through the EdgeX core command microservice. Status code: {response.status_code}"
-        )
-
-    return response.json()
-
-# --- Redis private utils ---
-
-async def _redis_enqueue_command(redis_client, device_name, command, params=None):
-    """
-    Enqueues a command for a given device by pushing it to the
-    device's command queue.
-    """
-    queue_key = f"commands:queue:{device_name}"
-    await redis_client.rpush(
-        queue_key,
-        json.dumps(
-            {
-                "command": command,
-                "device_name": device_name,
-                "params": params,
-            }
-        ),
-    )
-
-
-async def _redis_get_command_queue_len(redis_client, device_name):
-    """
-    Returns the length of the command queue for a given device.
-    """
-    queue_key = f"commands:queue:{device_name}"
-    total_size = 0
-
-    # Retrieve all commands in the queue without removing them
-    all_commands = await redis_client.lrange(queue_key, 0, -1)
-    return len(all_commands)
-
-
-async def _redis_consume_command_queue(redis_client, device_name):
-    """
-    Consumes the command queue for a given device by popping the
-    commands from the queue.
-    """
-    queue_key = f"commands:queue:{device_name}"
-    commands = [
-        json.loads(cmd.decode("utf-8"))
-        for cmd in await redis_client.lrange(queue_key, 0, -1)
-    ]
-    await redis_client.ltrim(queue_key, 1, 0)
-    for cmd in commands:
-        _handle_command(
-            command=cmd["command"],
-            device_name=cmd["device_name"],
-            params=cmd["params"],
-        )
-
-
-# --- Device commands private utils ---
-
-def _handle_command(command, device_name, params=None):
-    if command == "debug-prediction-command":
-        _run_prediction_command(device_name, params)
-    elif command == "device-predictive-model":
-        _run_upload_devices_predictive_model_command(device_name, params)
-    elif command == "device-config":
-        _run_config_device_command(device_name, params)
-    elif command == "state-machine-ready":
-        _run_ready_device_command(device_name)
-    elif command == "state-machine-start":
-        _run_start_device_command(device_name)
-    elif command == "state-machine-stop":
-        _run_stop_device_command(device_name)
-    elif command == "state-machine-reset":
-        _run_reset_device_command(device_name)
-    else:
-        raise Exception(f"Unknown command: {command}")
-
-
-def _run_upload_devices_predictive_model_command(device_name, params):
-    """
-    Updates the predictive model by setting the 'ml-model' deviceResource to true or false.
-    """
-    _payload = {
-        "predictive-model-size": params["model_size"],
-        "predictive-model-b64": params["b64_encoded_model"],
-    }
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="device-predictive-model",
-        payload={"device-predictive-model": _payload},
-    )
-    
-def _run_prediction_command(device_name, params):
-    _payload = {
-        "pred-cmd-source-layer": params["prediction_source_layer"],
-        "pred-cmd-request-timestamp": params["request_timestamp"],
-        "pred-cmd-measurement": params["measurement"],
-        "pred-cmd-prediction": params["prediction"],
-    }
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="debug-prediction-command",
-        payload={"debug-prediction-command": _payload},
-    )
-
-    
-def _run_config_device_command(device_name, params):
-    """
-    Configures the devices by setting the 'ml-model' deviceResource to true or false.
-    """
-    _payload = {
-        "config-measurement-interval-ms": params["measurement_interval_ms"],
-    }
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="device-config",
-        payload={
-            "device-config": _payload,
-        },
-    )
-
-
-def _run_ready_device_command(device_name):
-    """
-    Sets the 'state-machine-ready' deviceResource to true.
-    """
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="state-machine-ready",
-        payload={"state-machine-ready": "true"},
-    )
-
-
-def _run_start_device_command(device_name):
-    """
-    Starts a device by setting the 'state-machine-start' deviceResource to true.
-    """
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="state-machine-start",
-        payload={"state-machine-start": "true"},
-    )
-
-
-def _run_stop_device_command(device_name):
-    """
-    Stops a device by setting the 'state-machine-stop' deviceResource to false.
-    """
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="state-machine-stop",
-        payload={"state-machine-stop": "true"},
-    )
-
-
-def _run_reset_device_command(device_name):
-    """
-    Resets a device by setting the 'state-machine-reset' deviceResource to true.
-    """
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="state-machine-reset",
-        payload={"state-machine-reset": "true"},
-    )
-    
-def _send_num_pending_commands(device_name, pending_commands):
-    """
-    Sets the 'response-pending-commands' deviceResource with the number of pending commands.
-    """
-    _run_edgex_device_set_command(
-        device_name=device_name,
-        command="response-pending-commands",
-        payload={
-            "response-pending-commands": pending_commands,
-        },
-    )
-
-
-# --- Device commands public utils ---
-
-async def upload_gateway_predictive_model(model_payload):
-    """
-    Sends a predictive model to the gateway predictive node
-    """
-    response = requests.post(
-        url=f"{ESN_PRED_NODE_URL}/predictive-model",
-        json=model_payload,
-    )
-    
-    if response.status_code != 202:
-        raise Exception(
-            f"Failed to upload predictive model to the gateway predictive node. Status code: {response.status_code}"
-        )
-    
-    return response.json()
+        if response.status_code != status.HTTP_200_OK:
+            raise HTTPException(status_code=response.status_code, detail=response.json())
         
+async def metadata_get_sensors():
+    return await _get_from_microservice(f"{METADATA_MICROSERVICE_URL}/sensor")
+
+async def get_provisioned_sensors():
+    response = await metadata_get_sensors()
+    if response.status_code != status.HTTP_200_OK:
+        raise HTTPException(status_code=response.status_code, detail=response.json())
+    return [sensor for sensor in response.json() if sensor["provisioned"]]
+
+async def add_provisioned_sensors(sensors: list[meta_schemas.SensorDescriptor]):
+    await metadata_update_sensors(sensors, fields={"provisioned": True})
 
 
-async def retrieve_gateway_predictive_model(redis_client):
-    """
-    Retrieves the gateway model from redis
-    """
-    model = await redis_client.get("gateway-predictive-model")
-    return json.loads(model)
+# --- Sensor microservice functions ---
 
-
-async def upload_devices_predictive_model(redis_client, devices, model):
-    """
-    Enqueues a command for each device to update its predictive model.
-    """ 
-    for dev in devices:
-        await _redis_enqueue_command(
-            redis_client=redis_client,
-            device_name=dev,
-            command="device-predictive-model",
-            params=model,
-        )
-
-async def prediction_command(redis_client, device_name, payload):
-    await _redis_enqueue_command(
-        redis_client=redis_client,
-        device_name=device_name,
-        command="debug-prediction-command",
-        params=payload,
+async def set_sensor_state(
+    command: s_cmd_schemas.SetSensorState,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/set/sensor-state",
+        command.model_dump(),
     )
 
-
-async def config_devices(redis_client, devices, config):
-    for dev in devices:
-        await _redis_enqueue_command(
-            redis_client=redis_client,
-            device_name=dev,
-            command="device-config",
-            params=config,
-        )
-
-
-async def devices_ready(redis_client, devices):
-    for dev in devices:
-        await _redis_enqueue_command(
-            redis_client=redis_client,
-            device_name=dev,
-            command="state-machine-ready",
-        )
-
-
-async def start_devices(redis_client, devices):
-    for dev in devices:
-        await _redis_enqueue_command(
-            redis_client=redis_client,
-            device_name=dev,
-            command="state-machine-start",
-        )
-
-
-async def stop_devices(redis_client, devices):
-    for dev in devices:
-        await _redis_enqueue_command(
-            redis_client=redis_client,
-            device_name=dev,
-            command="state-machine-stop",
-        )
-
-
-async def reset_devices(redis_client, devices):
-    for dev in devices:
-        await _redis_enqueue_command(
-            redis_client=redis_client,
-            device_name=dev,
-            command="state-machine-reset",
-        )
-
-
-async def pending_commands(redis_client, device_name):
-    """
-    First sends the number of pending commands of a device, then
-    consumes the command queue.
-    """
-    queue_size = await _redis_get_command_queue_len(
-        redis_client=redis_client, device_name=device_name
+async def get_sensor_state(
+    command: s_cmd_schemas.GetSensorState,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/get/sensor-state",
+        command.model_dump(),
     )
-    _send_num_pending_commands(device_name=device_name, pending_commands=queue_size)
 
-    if queue_size > 0:
-        await _redis_consume_command_queue(redis_client=redis_client, device_name=device_name)
+async def set_inference_layer(
+    command: s_cmd_schemas.SetInferenceLayer,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/set/inference-layer",
+        command.model_dump(),
+    )
+
+async def get_inference_layer(
+    command: s_cmd_schemas.GetInferenceLayer,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/get/inference-layer",
+        command.model_dump(),
+    )
+
+async def set_sensor_config(
+    command: s_cmd_schemas.SetSensorConfig,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/set/sensor-config",
+        command.model_dump(),
+    )
+
+async def get_sensor_config(
+    command: s_cmd_schemas.GetSensorConfig,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/get/sensor-config",
+        command.model_dump(),
+    )
+
+async def set_sensor_model(
+    command: s_cmd_schemas.SetSensorModel,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/set/sensor-model",
+        command.model_dump(),
+    )
+
+async def send_inference_latency_benchmark_command(
+    command: s_cmd_schemas.InferenceLatencyBenchmarkCommand,
+):
+    return await _post_json_to_microservice(
+        f"{MQTT_SENSOR_MICROSERVICE_URL}/sensor/command/set/inf-latency-bench",
+        command.model_dump(),
+    )
+
+# --- Gateway Adaptive Heuristic ---
+async def get_gateway_api_with_sensors(gateway_name: str, target_sensors: list[str]):
+    return s_cmd_schemas.GatewayAPIWithSensors(
+        gateway_name=gateway_name,
+        target_sensors=target_sensors
+    )
+
+async def handle_heuristic_result(gateway_name: str, sensor_name: str, heuristic_result: int):
+    gateway_api_with_sensors = await get_gateway_api_with_sensors(gateway_name, [sensor_name])
+    if heuristic_result == HEURISTIC_ERROR_CODE:    # set sensor state to error
+        command = s_cmd_schemas.SetSensorState(
+            target=gateway_api_with_sensors,
+            resource_value=s_cmd_schemas.SensorState.ERROR
+        )
+        response = await set_sensor_state(command)
+        if response.status_code != status.HTTP_202_ACCEPTED:
+            raise HTTPException(status_code=response.status_code, detail=response.json())
+    elif heuristic_result == SENSOR_INFERENCE_LAYER:    # set sensor inference layer to sensor
+        command = s_cmd_schemas.SetInferenceLayer(
+            target=gateway_api_with_sensors,
+            resource_value=s_cmd_schemas.InferenceLayer.SENSOR
+        )
+        response = await set_inference_layer(command)
+        if response.status_code != status.HTTP_202_ACCEPTED:
+            raise HTTPException(status_code=response.status_code, detail=response.json())
+    elif heuristic_result == CLOUD_INFERENCE_LAYER:
+        command = s_cmd_schemas.SetInferenceLayer(
+            target=gateway_api_with_sensors,
+            resource_value=s_cmd_schemas.InferenceLayer.CLOUD
+        )
+        response = await set_inference_layer(command)
+        if response.status_code != status.HTTP_202_ACCEPTED:
+            raise HTTPException(status_code=response.status_code, detail=response.json())

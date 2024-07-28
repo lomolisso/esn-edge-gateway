@@ -7,5 +7,5 @@ RUN pip install -r /tmp/requirements.txt
 
 # run backend app
 WORKDIR /app
-EXPOSE 8012
-CMD uvicorn app.main:app --host 0.0.0.0 --port 8012 --reload
+EXPOSE $GATEWAY_API_PORT
+CMD uvicorn app.main:app --host 0.0.0.0 --port $GATEWAY_API_PORT --reload
