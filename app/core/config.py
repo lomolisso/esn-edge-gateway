@@ -23,6 +23,7 @@ CLOUD_API_URL: str = os.environ.get("CLOUD_API_URL")
 # --- Inference Approach & Benchmarking ---
 LATENCY_BENCHMARK: bool = bool(int(os.environ.get("LATENCY_BENCHMARK", "0")))
 ADAPTIVE_INFERENCE: bool = bool(int(os.environ.get("ADAPTIVE_INFERENCE", "1")))
+POLLING_INTERVAL_MS: int = int(os.environ.get("POLLING_INTERVAL_MS", "100"))
 
 # --- Inference Layer Constants ---
 CLOUD_INFERENCE_LAYER = 2

@@ -20,10 +20,10 @@ class GatewayAPI(BaseModel):
 class BaseCommand(BaseModel):
     method: Method
     target: GatewayAPI
-    resource_name: Optional[str] = None
-    resource_value: object = None
+    property_name: Optional[str] = None
+    property_value: object = None
 
-# --- Resource: Gateway Model ---
+# --- Property: Gateway Model ---
 class GatewayModel(BaseModel):
     """
     Schema for the Gateway Model
@@ -33,13 +33,13 @@ class GatewayModel(BaseModel):
     tf_model_b64: str
 
 class GatewayModelCommand(BaseCommand):
-    resource_name: str = "gateway-model"
+    property_name: str = "gateway-model"
 
 class SetGatewayModel(GatewayModelCommand):
     method: Method = Method.SET
-    resource_value: GatewayModel
+    property_value: GatewayModel
 
-# --- Resource: Available Sensors ---
+# --- Property: Available Sensors ---
 class BLEDevice(BaseModel):
     """
     Schema for the BLE Device
@@ -53,12 +53,12 @@ class AvailableSensorsCommand(BaseCommand):
     Schema for the Get Available Sensors Command
     """
 
-    resource_name: str = "available-sensors"
+    property_name: str = "available-sensors"
 
 class GetAvailableSensors(AvailableSensorsCommand):
     method: Method = Method.GET
 
-# --- Resource: Provisioned Sensors ---
+# --- Property: Provisioned Sensors ---
 class BLEDeviceWithPoP(BLEDevice):
     """
     Schema for the BLE Device with PoP
@@ -71,7 +71,7 @@ class ProvisionedSensorsCommand(BaseCommand):
     Schema for the Get Provisioned Sensors Command
     """
 
-    resource_name: str = "provisioned-sensors"
+    property_name: str = "provisioned-sensors"
 
 class GetProvisionedSensors(ProvisionedSensorsCommand):
     method: Method = Method.GET
@@ -79,10 +79,10 @@ class GetProvisionedSensors(ProvisionedSensorsCommand):
 class AddProvisionedSensors(ProvisionedSensorsCommand):
     method: Method = Method.ADD
     # each target gets a list of BLEDeviceWithPoP to provision
-    resource_value: list[BLEDeviceWithPoP]
+    property_value: list[BLEDeviceWithPoP]
 
 
-# --- Resource: Registered Sensors ---
+# --- Property: Registered Sensors ---
 class SensorDescriptor(BaseModel):
     """
     Schema for the Sensor Descriptor
@@ -96,7 +96,7 @@ class RegisteredSensorsCommand(BaseCommand):
     Schema for the Get Registered Sensors Command
     """
 
-    resource_name: str = "registered-sensors"
+    property_name: str = "registered-sensors"
 
 class GetRegisteredSensors(RegisteredSensorsCommand):
     method: Method = Method.GET
@@ -104,4 +104,4 @@ class GetRegisteredSensors(RegisteredSensorsCommand):
 class AddRegisteredSensors(RegisteredSensorsCommand):
     method: Method = Method.ADD
     # each target gets a list of SensorDescriptor to register
-    resource_value: list[SensorDescriptor]
+    property_value: list[SensorDescriptor]
