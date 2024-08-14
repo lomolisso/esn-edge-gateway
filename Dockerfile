@@ -8,4 +8,4 @@ RUN pip install -r /tmp/requirements.txt
 # run backend app
 WORKDIR /app
 EXPOSE $GATEWAY_API_PORT
-CMD uvicorn app.main:app --host 0.0.0.0 --port $GATEWAY_API_PORT --reload
+CMD uvicorn app.main:app --host 0.0.0.0 --port $GATEWAY_API_PORT --workers 5
