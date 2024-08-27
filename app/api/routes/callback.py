@@ -10,6 +10,8 @@ from app.api.schemas.sensor import command as s_cmd
 from app.api.schemas.sensor import response as s_resp
 from app.api.schemas.sensor import export as s_export
 
+import time
+
 callback_router = APIRouter(tags=["Callback Routes"])
 
 # --- Command Responses ---
@@ -36,9 +38,16 @@ async def store_sensor_config_response(response: s_resp.SensorConfigResponse):
 
 @callback_router.post("/export/sensor-data", status_code=status.HTTP_201_CREATED)
 async def export_sensor_data(sensor_data: s_export.SensorDataExport):
+    t0 = time.time() * 1000 # in milliseconds
+    print(f"Received sensor data from {sensor_data.metadata.sensor_name}")
+    print(f"Receiving from MQTT took {t0-sensor_data.export_value.inference_descriptor.send_timestamp} ms")
+    
     # Step 1: verify if sender is registered in the metadata microservice
     sensor_name = sensor_data.metadata.sensor_name
     await utils.verify_target_sensors([sensor_name])
+
+    t1 = time.time() * 1000
+    print(f"Verification took {t1 - t0} ms")
 
     # Step 2: perform inference if needed
     _inference_descriptor: s_export.InferenceDescriptor = sensor_data.export_value.inference_descriptor
@@ -48,6 +57,9 @@ async def export_sensor_data(sensor_data: s_export.SensorDataExport):
         response = await utils.send_prediction_request(sensor_data)
         if response.status_code != status.HTTP_202_ACCEPTED:
             raise HTTPException(status_code=response.status_code, detail=response.json())
+        
+        t2 = time.time() * 1000
+        print(f"Prediction request took {t2 - t1} ms")
         
         # Step 2.2: poll for prediction result
         task_id = response.json()["task_id"]
@@ -67,6 +79,9 @@ async def export_sensor_data(sensor_data: s_export.SensorDataExport):
             else:
                 raise HTTPException(status_code=response.status_code, detail=response.json())
         
+        t3 = time.time() * 1000
+        print(f"Prediction took {t3 - t2} ms")
+        
         # Step 2.3: Update sensor data with prediction result
         sensor_data.export_value.inference_descriptor.prediction = prediction_result
 
@@ -78,7 +93,11 @@ async def export_sensor_data(sensor_data: s_export.SensorDataExport):
                 send_timestamp=_inference_descriptor.send_timestamp,
             )
             await utils.send_inference_latency_benchmark_command(GATEWAY_NAME, sensor_name, cmd)
-            
+        
+        t4 = time.time() * 1000
+        print(f"Exporting inference latency benchmark took {t4 - t3} ms")
+        
+         
         # Step 2.5: Handle heuristic result if adaptive inference is enabled.
         if ADAPTIVE_INFERENCE:
             await utils.handle_heuristic_result(GATEWAY_NAME, sensor_name, heuristic_result)
