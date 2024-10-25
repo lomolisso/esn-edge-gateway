@@ -46,10 +46,7 @@ async def export_sensor_data(sensor_data: s_export.SensorDataExport):
     sensor_name = sensor_data.metadata.sensor_name
     await utils.verify_target_sensors([sensor_name])
 
-    t1 = time.time() * 1000
-    print(f"Verification took {t1 - t0} ms")
-
-    # Step 2: perform inference if needed
+    # Step 2 (Case 1): perform inference if needed
     _inference_descriptor: s_export.InferenceDescriptor = sensor_data.export_value.inference_descriptor
     _inference_layer = _inference_descriptor.inference_layer
     if _inference_layer == s_export.InferenceLayer.GATEWAY:
@@ -57,9 +54,6 @@ async def export_sensor_data(sensor_data: s_export.SensorDataExport):
         response = await utils.send_prediction_request(sensor_data)
         if response.status_code != status.HTTP_202_ACCEPTED:
             raise HTTPException(status_code=response.status_code, detail=response.json())
-        
-        t2 = time.time() * 1000
-        print(f"Prediction request took {t2 - t1} ms")
         
         # Step 2.2: poll for prediction result
         task_id = response.json()["task_id"]
@@ -79,9 +73,6 @@ async def export_sensor_data(sensor_data: s_export.SensorDataExport):
             else:
                 raise HTTPException(status_code=response.status_code, detail=response.json())
         
-        t3 = time.time() * 1000
-        print(f"Prediction took {t3 - t2} ms")
-        
         # Step 2.3: Update sensor data with prediction result
         sensor_data.export_value.inference_descriptor.prediction = prediction_result
 
@@ -94,18 +85,15 @@ async def export_sensor_data(sensor_data: s_export.SensorDataExport):
             )
             await utils.send_inference_latency_benchmark_command(GATEWAY_NAME, sensor_name, cmd)
         
-        t4 = time.time() * 1000
-        print(f"Exporting inference latency benchmark took {t4 - t3} ms")
-        
-         
         # Step 2.5: Handle heuristic result if adaptive inference is enabled.
         if ADAPTIVE_INFERENCE:
             await utils.handle_heuristic_result(GATEWAY_NAME, sensor_name, heuristic_result)
             
-    # Step 3: export sensor data to the cloud api
-    response = await utils.export_sensor_data(sensor_data)
-    if response.status_code != status.HTTP_201_CREATED:
-        raise HTTPException(status_code=response.status_code, detail=response.json())
+    # Step 2 (Case 2): export sensor data to the cloud api
+    if _inference_layer == s_export.InferenceLayer.CLOUD:
+        response = await utils.export_sensor_data(sensor_data)
+        if response.status_code != status.HTTP_201_CREATED:
+            raise HTTPException(status_code=response.status_code, detail=response.json())
 
         
 @callback_router.post("/export/inference-latency-benchmark", status_code=status.HTTP_201_CREATED)

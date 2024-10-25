@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # Retrieve enviroment variables from .env file
-load_dotenv()
+#load_dotenv()
 
 # --- Gateway API configuration ---
 SECRET_KEY: str = os.environ.get("SECRET_KEY", "secret_key")

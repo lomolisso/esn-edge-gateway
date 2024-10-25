@@ -28,19 +28,19 @@ async def async_sleep(ms: int):
 
 async def _post_json_to_microservice(url: str, json_data: dict):
     async with httpx.AsyncClient() as client:
-        return await client.post(url, json=json_data)
+        return await client.post(url, json=json_data, timeout=30)
 
 async def _put_json_to_microservice(url: str, json_data: dict):
     async with httpx.AsyncClient() as client:
-        return await client.put(url, json=json_data)
+        return await client.put(url, json=json_data, timeout=30)
 
 async def _get_from_microservice(url: str):
     async with httpx.AsyncClient() as client:
-        return await client.get(url)
+        return await client.get(url, timeout=30)
 
 async def _delete_from_microservice(url: str):
     async with httpx.AsyncClient() as client:
-        return await client.delete(url)
+        return await client.delete(url, timeout=30)
 
 # --- Cloud API functions ---
 async def store_sensor_state_response(response: s_resp.SensorStateResponse):
@@ -111,7 +111,7 @@ async def metadata_update_sensors(sensors: list[metadata.SensorDescriptor], fiel
             raise HTTPException(status_code=response.status_code, detail=response.json())
         
 async def metadata_get_sensors():
-    return await _get_from_microservice(f"{METADATA_MICROSERVICE_URL}/sensor")
+    return await _get_from_microservice(f"{METADATA_MICROSERVICE_URL}/sensors")
 
 async def get_provisioned_sensors():
     response = await metadata_get_sensors()
